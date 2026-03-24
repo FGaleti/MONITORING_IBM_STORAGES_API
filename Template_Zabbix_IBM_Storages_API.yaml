@@ -1,0 +1,2480 @@
+zabbix_export:
+  version: '6.2'
+  date: '2026-03-24T16:32:14Z'
+  template_groups:
+    -
+      uuid: 217afd021d7e458b9c48e58ae98ca96f
+      name: Templates/Storage
+  templates:
+    -
+      uuid: a8c93ed0f279423aa2da9b1082d9c812
+      template: 'TEMPLATE API STORAGE FS'
+      name: 'TEMPLATE API STORAGE FS'
+      description: 'TEMPLATE API STORAGE FS'
+      groups:
+        -
+          name: Templates/Storage
+      items:
+        -
+          uuid: e9e270f5840f4be99e13b6d4806e7c9a
+          name: 'Storage: Get Canisters'
+          type: SCRIPT
+          key: Get.Canisters
+          delay: 15m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            // --- LEITURA DE PARÂMETROS NATIVA DO ZABBIX ---
+            var params = {};
+            try {
+                params = JSON.parse(value);
+            } catch (e) {
+                throw JSON.stringify({ error: "O Zabbix não enviou os parâmetros no formato JSON. Verifique a seção Parameters do item." });
+            }
+            
+            var baseUrl = params.base_url;
+            var username = params.username;
+            var password = params.password;
+            
+            function fail(msg, details) {
+                var out = { error: msg };
+                if (details) { out.details = details; }
+                throw JSON.stringify(out);
+            }
+            
+            function normalizeBaseUrl(url) {
+                return url.replace(/\/+$/, '');
+            }
+            
+            function parseJsonSafe(raw, context) {
+                if (raw === null || raw === undefined || raw === '') {
+                    fail('Resposta vazia da API em ' + context);
+                }
+                try {
+                    return JSON.parse(raw);
+                } catch (e) {
+                    fail('Resposta não é JSON válido em ' + context, String(e));
+                }
+            }
+            
+            function getStatusCode(req, fallbackBody) {
+                var status = null;
+                try { status = req.getStatus(); } catch (e) {}
+            
+                if (status !== null && status !== undefined) {
+                    return parseInt(status, 10);
+                }
+            
+                if (fallbackBody && typeof fallbackBody === 'string') {
+                    var m = fallbackBody.match(/^HTTP\/\d\.\d\s+(\d{3})/m);
+                    if (m) { return parseInt(m[1], 10); }
+                }
+                return null;
+            }
+            
+            function getHeaderValueCaseInsensitive(headers, name) {
+                if (!headers) { return null; }
+                var lowerName = String(name).toLowerCase();
+                for (var key in headers) {
+                    if (headers.hasOwnProperty(key) && String(key).toLowerCase() === lowerName) {
+                        return headers[key];
+                    }
+                }
+                return null;
+            }
+            
+            function extractToken(req, authBody) {
+                var headers = null;
+                var token = null;
+            
+                try { headers = req.getHeaders(); } catch (e) { headers = null; }
+            
+                token = getHeaderValueCaseInsensitive(headers, 'X-Auth-Token');
+            
+                if (!token && typeof authBody === 'string' && authBody.length > 0) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(authBody); } catch (eJson) { parsed = null; }
+            
+                    if (parsed && typeof parsed === 'object') {
+                        token = parsed.token || parsed.auth_token || parsed['X-Auth-Token'] || parsed.x_auth_token || null;
+                    }
+            
+                    if (!token) {
+                        var m = authBody.match(/"(?:token|auth_token|x_auth_token|X-Auth-Token)"\s*:\s*"([^"]+)"/);
+                        if (m) { token = m[1]; }
+                    }
+                }
+            
+                if (!token || String(token).trim() === '') {
+                    fail('Token de autenticação não encontrado (header ou corpo).', authBody);
+                }
+                return String(token).trim();
+            }
+            
+            // --- VALIDAÇÃO INICIAL ---
+            if (!baseUrl) { fail('Parâmetro obrigatório ausente: base_url'); }
+            if (!username) { fail('Parâmetro obrigatório ausente: username'); }
+            if (!password) { fail('Parâmetro obrigatório ausente: password'); }
+            
+            baseUrl = normalizeBaseUrl(baseUrl);
+            
+            var authUrl = baseUrl + '/rest/v1/auth';
+            // URL alterada para buscar os canisters
+            var dataUrl = baseUrl + '/rest/v1/lsenclosurecanister'; 
+            
+            // --- INSTÂNCIA HTTP ---
+            var req = new HttpRequest();
+            
+            var authBody;
+            var authStatus;
+            var token;
+            var dataBody;
+            var dataStatus;
+            var dataParsed;
+            
+            try {
+                // PASSO 1: Solicitar Token
+                req.clearHeader();
+                req.addHeader('Content-Type: application/json');
+                req.addHeader('X-Auth-Username: ' + username);
+                req.addHeader('X-Auth-Password: ' + password);
+            
+                authBody = req.post(authUrl, '');
+                authStatus = getStatusCode(req, authBody);
+            
+                if (authStatus !== 200 && authStatus !== 201) {
+                    fail('Falha na autenticação. HTTP ' + (authStatus === null ? 'desconhecido' : authStatus), authBody);
+                }
+            
+                token = extractToken(req, authBody);
+            
+                // PASSO 2: Coletar os Canisters
+                req.clearHeader();
+                req.addHeader('X-Auth-Token: ' + token);
+                req.addHeader('Accept: application/json');
+            
+                dataBody = req.post(dataUrl, '');
+                dataStatus = getStatusCode(req, dataBody);
+            
+                if (dataStatus !== 200) {
+                    fail('Falha ao coletar lsenclosurecanister. HTTP ' + (dataStatus === null ? 'desconhecido' : dataStatus), dataBody);
+                }
+            
+                dataParsed = parseJsonSafe(dataBody, '/rest/v1/lsenclosurecanister');
+            
+                if (!(dataParsed instanceof Array)) {
+                    fail('Formato inesperado: a API não retornou um array de Canisters JSON.', dataBody);
+                }
+            
+                return JSON.stringify(dataParsed);
+            
+            } catch (e) {
+                if (typeof e === 'string') { throw e; }
+                fail('Erro inesperado na execução do script.', String(e));
+            }
+          timeout: 30s
+          parameters:
+            -
+              name: base_url
+              value: '{$API.URL}'
+            -
+              name: password
+              value: '{$API.PASS}'
+            -
+              name: username
+              value: '{$API.USER}'
+        -
+          uuid: 1edc1a847979410997eac9305edbe958
+          name: 'Storage: Get Hosts'
+          type: SCRIPT
+          key: Get.Hosts
+          delay: 15m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            // --- LEITURA DE PARÂMETROS NATIVA DO ZABBIX ---
+            var params = {};
+            try {
+                params = JSON.parse(value);
+            } catch (e) {
+                throw JSON.stringify({ error: "O Zabbix não enviou os parâmetros no formato JSON. Verifique a seção Parameters do item." });
+            }
+            
+            var baseUrl = params.base_url;
+            var username = params.username;
+            var password = params.password;
+            
+            function fail(msg, details) {
+                var out = { error: msg };
+                if (details) { out.details = details; }
+                throw JSON.stringify(out);
+            }
+            
+            function normalizeBaseUrl(url) {
+                return url.replace(/\/+$/, '');
+            }
+            
+            function parseJsonSafe(raw, context) {
+                if (raw === null || raw === undefined || raw === '') {
+                    fail('Resposta vazia da API em ' + context);
+                }
+                try {
+                    return JSON.parse(raw);
+                } catch (e) {
+                    fail('Resposta não é JSON válido em ' + context, String(e));
+                }
+            }
+            
+            function getStatusCode(req, fallbackBody) {
+                var status = null;
+                try { status = req.getStatus(); } catch (e) {}
+            
+                if (status !== null && status !== undefined) {
+                    return parseInt(status, 10);
+                }
+            
+                if (fallbackBody && typeof fallbackBody === 'string') {
+                    var m = fallbackBody.match(/^HTTP\/\d\.\d\s+(\d{3})/m);
+                    if (m) { return parseInt(m[1], 10); }
+                }
+                return null;
+            }
+            
+            function getHeaderValueCaseInsensitive(headers, name) {
+                if (!headers) { return null; }
+                var lowerName = String(name).toLowerCase();
+                for (var key in headers) {
+                    if (headers.hasOwnProperty(key) && String(key).toLowerCase() === lowerName) {
+                        return headers[key];
+                    }
+                }
+                return null;
+            }
+            
+            function extractToken(req, authBody) {
+                var headers = null;
+                var token = null;
+            
+                try { headers = req.getHeaders(); } catch (e) { headers = null; }
+            
+                token = getHeaderValueCaseInsensitive(headers, 'X-Auth-Token');
+            
+                if (!token && typeof authBody === 'string' && authBody.length > 0) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(authBody); } catch (eJson) { parsed = null; }
+            
+                    if (parsed && typeof parsed === 'object') {
+                        token = parsed.token || parsed.auth_token || parsed['X-Auth-Token'] || parsed.x_auth_token || null;
+                    }
+            
+                    if (!token) {
+                        var m = authBody.match(/"(?:token|auth_token|x_auth_token|X-Auth-Token)"\s*:\s*"([^"]+)"/);
+                        if (m) { token = m[1]; }
+                    }
+                }
+            
+                if (!token || String(token).trim() === '') {
+                    fail('Token de autenticação não encontrado (header ou corpo).', authBody);
+                }
+                return String(token).trim();
+            }
+            
+            // --- VALIDAÇÃO INICIAL ---
+            if (!baseUrl) { fail('Parâmetro obrigatório ausente: base_url'); }
+            if (!username) { fail('Parâmetro obrigatório ausente: username'); }
+            if (!password) { fail('Parâmetro obrigatório ausente: password'); }
+            
+            baseUrl = normalizeBaseUrl(baseUrl);
+            
+            var authUrl = baseUrl + '/rest/v1/auth';
+            // URL alterada para buscar os hosts
+            var dataUrl = baseUrl + '/rest/v1/lshost'; 
+            
+            // --- INSTÂNCIA HTTP ---
+            var req = new HttpRequest();
+            
+            var authBody;
+            var authStatus;
+            var token;
+            var dataBody;
+            var dataStatus;
+            var dataParsed;
+            
+            try {
+                // PASSO 1: Solicitar Token
+                req.clearHeader();
+                req.addHeader('Content-Type: application/json');
+                req.addHeader('X-Auth-Username: ' + username);
+                req.addHeader('X-Auth-Password: ' + password);
+            
+                authBody = req.post(authUrl, '');
+                authStatus = getStatusCode(req, authBody);
+            
+                if (authStatus !== 200 && authStatus !== 201) {
+                    fail('Falha na autenticação. HTTP ' + (authStatus === null ? 'desconhecido' : authStatus), authBody);
+                }
+            
+                token = extractToken(req, authBody);
+            
+                // PASSO 2: Coletar os Hosts
+                req.clearHeader();
+                req.addHeader('X-Auth-Token: ' + token);
+                req.addHeader('Accept: application/json');
+            
+                dataBody = req.post(dataUrl, '');
+                dataStatus = getStatusCode(req, dataBody);
+            
+                if (dataStatus !== 200) {
+                    fail('Falha ao coletar lshost. HTTP ' + (dataStatus === null ? 'desconhecido' : dataStatus), dataBody);
+                }
+            
+                dataParsed = parseJsonSafe(dataBody, '/rest/v1/lshost');
+            
+                if (!(dataParsed instanceof Array)) {
+                    fail('Formato inesperado: a API não retornou um array de Hosts JSON.', dataBody);
+                }
+            
+                return JSON.stringify(dataParsed);
+            
+            } catch (e) {
+                if (typeof e === 'string') { throw e; }
+                fail('Erro inesperado na execução do script.', String(e));
+            }
+          timeout: 30s
+          parameters:
+            -
+              name: base_url
+              value: '{$API.URL}'
+            -
+              name: password
+              value: '{$API.PASS}'
+            -
+              name: username
+              value: '{$API.USER}'
+        -
+          uuid: c01521ff90ee46b3ab618c1ebdd767e7
+          name: 'Storage: Get LsDrive'
+          type: SCRIPT
+          key: Get.lsdrive
+          delay: 15m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            // --- LEITURA DE PARÂMETROS NATIVA DO ZABBIX ---
+            var params = {};
+            try {
+                params = JSON.parse(value);
+            } catch (e) {
+                throw JSON.stringify({ error: "O Zabbix não enviou os parâmetros no formato JSON. Verifique a seção Parameters do item." });
+            }
+            
+            var baseUrl = params.base_url;
+            var username = params.username;
+            var password = params.password;
+            
+            function fail(msg, details) {
+                var out = { error: msg };
+                if (details) { out.details = details; }
+                throw JSON.stringify(out);
+            }
+            
+            function normalizeBaseUrl(url) {
+                return url.replace(/\/+$/, '');
+            }
+            
+            function parseJsonSafe(raw, context) {
+                if (raw === null || raw === undefined || raw === '') {
+                    fail('Resposta vazia da API em ' + context);
+                }
+                try {
+                    return JSON.parse(raw);
+                } catch (e) {
+                    fail('Resposta não é JSON válido em ' + context, String(e));
+                }
+            }
+            
+            function getStatusCode(req, fallbackBody) {
+                var status = null;
+                try { status = req.getStatus(); } catch (e) {}
+            
+                if (status !== null && status !== undefined) {
+                    return parseInt(status, 10);
+                }
+            
+                if (fallbackBody && typeof fallbackBody === 'string') {
+                    var m = fallbackBody.match(/^HTTP\/\d\.\d\s+(\d{3})/m);
+                    if (m) { return parseInt(m[1], 10); }
+                }
+                return null;
+            }
+            
+            function getHeaderValueCaseInsensitive(headers, name) {
+                if (!headers) { return null; }
+                var lowerName = String(name).toLowerCase();
+                for (var key in headers) {
+                    if (headers.hasOwnProperty(key) && String(key).toLowerCase() === lowerName) {
+                        return headers[key];
+                    }
+                }
+                return null;
+            }
+            
+            function extractToken(req, authBody) {
+                var headers = null;
+                var token = null;
+            
+                try { headers = req.getHeaders(); } catch (e) { headers = null; }
+            
+                token = getHeaderValueCaseInsensitive(headers, 'X-Auth-Token');
+            
+                if (!token && typeof authBody === 'string' && authBody.length > 0) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(authBody); } catch (eJson) { parsed = null; }
+            
+                    if (parsed && typeof parsed === 'object') {
+                        token = parsed.token || parsed.auth_token || parsed['X-Auth-Token'] || parsed.x_auth_token || null;
+                    }
+            
+                    if (!token) {
+                        var m = authBody.match(/"(?:token|auth_token|x_auth_token|X-Auth-Token)"\s*:\s*"([^"]+)"/);
+                        if (m) { token = m[1]; }
+                    }
+                }
+            
+                if (!token || String(token).trim() === '') {
+                    fail('Token de autenticação não encontrado (header ou corpo).', authBody);
+                }
+                return String(token).trim();
+            }
+            
+            // --- VALIDAÇÃO INICIAL ---
+            if (!baseUrl) { fail('Parâmetro obrigatório ausente: base_url'); }
+            if (!username) { fail('Parâmetro obrigatório ausente: username'); }
+            if (!password) { fail('Parâmetro obrigatório ausente: password'); }
+            
+            baseUrl = normalizeBaseUrl(baseUrl);
+            
+            var authUrl = baseUrl + '/rest/v1/auth';
+            // URL alterada para buscar os drives em vez dos pools
+            var dataUrl = baseUrl + '/rest/v1/lsdrive'; 
+            
+            // --- INSTÂNCIA HTTP ---
+            var req = new HttpRequest();
+            
+            var authBody;
+            var authStatus;
+            var token;
+            var dataBody;
+            var dataStatus;
+            var dataParsed;
+            
+            try {
+                // PASSO 1: Solicitar Token
+                req.clearHeader();
+                req.addHeader('Content-Type: application/json');
+                req.addHeader('X-Auth-Username: ' + username);
+                req.addHeader('X-Auth-Password: ' + password);
+            
+                authBody = req.post(authUrl, '');
+                authStatus = getStatusCode(req, authBody);
+            
+                if (authStatus !== 200 && authStatus !== 201) {
+                    fail('Falha na autenticação. HTTP ' + (authStatus === null ? 'desconhecido' : authStatus), authBody);
+                }
+            
+                token = extractToken(req, authBody);
+            
+                // PASSO 2: Coletar os Drives
+                req.clearHeader();
+                req.addHeader('X-Auth-Token: ' + token);
+                req.addHeader('Accept: application/json');
+            
+                dataBody = req.post(dataUrl, '');
+                dataStatus = getStatusCode(req, dataBody);
+            
+                if (dataStatus !== 200) {
+                    fail('Falha ao coletar lsdrive. HTTP ' + (dataStatus === null ? 'desconhecido' : dataStatus), dataBody);
+                }
+            
+                dataParsed = parseJsonSafe(dataBody, '/rest/v1/lsdrive');
+            
+                if (!(dataParsed instanceof Array)) {
+                    fail('Formato inesperado: a API não retornou um array de Drives JSON.', dataBody);
+                }
+            
+                return JSON.stringify(dataParsed);
+            
+            } catch (e) {
+                if (typeof e === 'string') { throw e; }
+                fail('Erro inesperado na execução do script.', String(e));
+            }
+          timeout: 30s
+          parameters:
+            -
+              name: base_url
+              value: '{$API.URL}'
+            -
+              name: password
+              value: '{$API.PASS}'
+            -
+              name: username
+              value: '{$API.USER}'
+        -
+          uuid: 4cc609b41d4c4d56a8f87fac499bc702
+          name: 'Storage: Get LsEnclosure'
+          type: SCRIPT
+          key: Get.LsEnclosure
+          delay: 15m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            // --- LEITURA DE PARÂMETROS NATIVA DO ZABBIX ---
+            var params = {};
+            try {
+                params = JSON.parse(value);
+            } catch (e) {
+                throw JSON.stringify({ error: "O Zabbix não enviou os parâmetros no formato JSON. Verifique a seção Parameters do item." });
+            }
+            
+            var baseUrl = params.base_url;
+            var username = params.username;
+            var password = params.password;
+            
+            function fail(msg, details) {
+                var out = { error: msg };
+                if (details) { out.details = details; }
+                throw JSON.stringify(out);
+            }
+            
+            function normalizeBaseUrl(url) {
+                return url.replace(/\/+$/, '');
+            }
+            
+            function parseJsonSafe(raw, context) {
+                if (raw === null || raw === undefined || raw === '') {
+                    fail('Resposta vazia da API em ' + context);
+                }
+                try {
+                    return JSON.parse(raw);
+                } catch (e) {
+                    fail('Resposta não é JSON válido em ' + context, String(e));
+                }
+            }
+            
+            function getStatusCode(req, fallbackBody) {
+                var status = null;
+                try { status = req.getStatus(); } catch (e) {}
+            
+                if (status !== null && status !== undefined) {
+                    return parseInt(status, 10);
+                }
+            
+                if (fallbackBody && typeof fallbackBody === 'string') {
+                    var m = fallbackBody.match(/^HTTP\/\d\.\d\s+(\d{3})/m);
+                    if (m) { return parseInt(m[1], 10); }
+                }
+                return null;
+            }
+            
+            function getHeaderValueCaseInsensitive(headers, name) {
+                if (!headers) { return null; }
+                var lowerName = String(name).toLowerCase();
+                for (var key in headers) {
+                    if (headers.hasOwnProperty(key) && String(key).toLowerCase() === lowerName) {
+                        return headers[key];
+                    }
+                }
+                return null;
+            }
+            
+            function extractToken(req, authBody) {
+                var headers = null;
+                var token = null;
+            
+                try { headers = req.getHeaders(); } catch (e) { headers = null; }
+            
+                token = getHeaderValueCaseInsensitive(headers, 'X-Auth-Token');
+            
+                if (!token && typeof authBody === 'string' && authBody.length > 0) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(authBody); } catch (eJson) { parsed = null; }
+            
+                    if (parsed && typeof parsed === 'object') {
+                        token = parsed.token || parsed.auth_token || parsed['X-Auth-Token'] || parsed.x_auth_token || null;
+                    }
+            
+                    if (!token) {
+                        var m = authBody.match(/"(?:token|auth_token|x_auth_token|X-Auth-Token)"\s*:\s*"([^"]+)"/);
+                        if (m) { token = m[1]; }
+                    }
+                }
+            
+                if (!token || String(token).trim() === '') {
+                    fail('Token de autenticação não encontrado (header ou corpo).', authBody);
+                }
+                return String(token).trim();
+            }
+            
+            // --- VALIDAÇÃO INICIAL ---
+            if (!baseUrl) { fail('Parâmetro obrigatório ausente: base_url'); }
+            if (!username) { fail('Parâmetro obrigatório ausente: username'); }
+            if (!password) { fail('Parâmetro obrigatório ausente: password'); }
+            
+            baseUrl = normalizeBaseUrl(baseUrl);
+            
+            var authUrl = baseUrl + '/rest/v1/auth';
+            // URL alterada para buscar os enclosures
+            var dataUrl = baseUrl + '/rest/v1/lsenclosure'; 
+            
+            // --- INSTÂNCIA HTTP ---
+            var req = new HttpRequest();
+            
+            var authBody;
+            var authStatus;
+            var token;
+            var dataBody;
+            var dataStatus;
+            var dataParsed;
+            
+            try {
+                // PASSO 1: Solicitar Token
+                req.clearHeader();
+                req.addHeader('Content-Type: application/json');
+                req.addHeader('X-Auth-Username: ' + username);
+                req.addHeader('X-Auth-Password: ' + password);
+            
+                authBody = req.post(authUrl, '');
+                authStatus = getStatusCode(req, authBody);
+            
+                if (authStatus !== 200 && authStatus !== 201) {
+                    fail('Falha na autenticação. HTTP ' + (authStatus === null ? 'desconhecido' : authStatus), authBody);
+                }
+            
+                token = extractToken(req, authBody);
+            
+                // PASSO 2: Coletar os Enclosures
+                req.clearHeader();
+                req.addHeader('X-Auth-Token: ' + token);
+                req.addHeader('Accept: application/json');
+            
+                dataBody = req.post(dataUrl, '');
+                dataStatus = getStatusCode(req, dataBody);
+            
+                if (dataStatus !== 200) {
+                    fail('Falha ao coletar lsenclosure. HTTP ' + (dataStatus === null ? 'desconhecido' : dataStatus), dataBody);
+                }
+            
+                dataParsed = parseJsonSafe(dataBody, '/rest/v1/lsenclosure');
+            
+                if (!(dataParsed instanceof Array)) {
+                    fail('Formato inesperado: a API não retornou um array de Enclosures JSON.', dataBody);
+                }
+            
+                return JSON.stringify(dataParsed);
+            
+            } catch (e) {
+                if (typeof e === 'string') { throw e; }
+                fail('Erro inesperado na execução do script.', String(e));
+            }
+          timeout: 30s
+          parameters:
+            -
+              name: base_url
+              value: '{$API.URL}'
+            -
+              name: password
+              value: '{$API.PASS}'
+            -
+              name: username
+              value: '{$API.USER}'
+        -
+          uuid: 32393673cffa46efa31d694381a95b3d
+          name: 'Storage: Get Pools Data'
+          type: SCRIPT
+          key: Get.Pools
+          delay: 15m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            // --- LEITURA DE PARÂMETROS NATIVA DO ZABBIX ---
+            var params = {};
+            try {
+                params = JSON.parse(value);
+            } catch (e) {
+                throw JSON.stringify({ error: "O Zabbix não enviou os parâmetros no formato JSON. Verifique a seção Parameters do item." });
+            }
+            
+            var baseUrl = params.base_url;
+            var username = params.username;
+            var password = params.password;
+            
+            function fail(msg, details) {
+                var out = { error: msg };
+                if (details) { out.details = details; }
+                throw JSON.stringify(out);
+            }
+            
+            function normalizeBaseUrl(url) {
+                return url.replace(/\/+$/, '');
+            }
+            
+            function parseJsonSafe(raw, context) {
+                if (raw === null || raw === undefined || raw === '') {
+                    fail('Resposta vazia da API em ' + context);
+                }
+                try {
+                    return JSON.parse(raw);
+                } catch (e) {
+                    fail('Resposta não é JSON válido em ' + context, String(e));
+                }
+            }
+            
+            function getStatusCode(req, fallbackBody) {
+                var status = null;
+                try { status = req.getStatus(); } catch (e) {}
+            
+                if (status !== null && status !== undefined) {
+                    return parseInt(status, 10);
+                }
+            
+                if (fallbackBody && typeof fallbackBody === 'string') {
+                    var m = fallbackBody.match(/^HTTP\/\d\.\d\s+(\d{3})/m);
+                    if (m) { return parseInt(m[1], 10); }
+                }
+                return null;
+            }
+            
+            function getHeaderValueCaseInsensitive(headers, name) {
+                if (!headers) { return null; }
+                var lowerName = String(name).toLowerCase();
+                for (var key in headers) {
+                    if (headers.hasOwnProperty(key) && String(key).toLowerCase() === lowerName) {
+                        return headers[key];
+                    }
+                }
+                return null;
+            }
+            
+            function extractToken(req, authBody) {
+                var headers = null;
+                var token = null;
+            
+                try { headers = req.getHeaders(); } catch (e) { headers = null; }
+            
+                token = getHeaderValueCaseInsensitive(headers, 'X-Auth-Token');
+            
+                if (!token && typeof authBody === 'string' && authBody.length > 0) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(authBody); } catch (eJson) { parsed = null; }
+            
+                    if (parsed && typeof parsed === 'object') {
+                        token = parsed.token || parsed.auth_token || parsed['X-Auth-Token'] || parsed.x_auth_token || null;
+                    }
+            
+                    if (!token) {
+                        var m = authBody.match(/"(?:token|auth_token|x_auth_token|X-Auth-Token)"\s*:\s*"([^"]+)"/);
+                        if (m) { token = m[1]; }
+                    }
+                }
+            
+                if (!token || String(token).trim() === '') {
+                    fail('Token de autenticação não encontrado (header ou corpo).', authBody);
+                }
+                return String(token).trim();
+            }
+            
+            // --- VALIDAÇÃO INICIAL ---
+            if (!baseUrl) { fail('Parâmetro obrigatório ausente: base_url'); }
+            if (!username) { fail('Parâmetro obrigatório ausente: username'); }
+            if (!password) { fail('Parâmetro obrigatório ausente: password'); }
+            
+            baseUrl = normalizeBaseUrl(baseUrl);
+            
+            var authUrl = baseUrl + '/rest/v1/auth';
+            var dataUrl = baseUrl + '/rest/v1/lsmdiskgrp';
+            
+            // --- INSTÂNCIA HTTP ---
+            var req = new HttpRequest();
+            
+            var authBody;
+            var authStatus;
+            var token;
+            var dataBody;
+            var dataStatus;
+            var dataParsed;
+            
+            try {
+                // PASSO 1: Solicitar Token
+                req.clearHeader();
+                req.addHeader('Content-Type: application/json');
+                req.addHeader('X-Auth-Username: ' + username);
+                req.addHeader('X-Auth-Password: ' + password);
+            
+                authBody = req.post(authUrl, '');
+                authStatus = getStatusCode(req, authBody);
+            
+                if (authStatus !== 200 && authStatus !== 201) {
+                    fail('Falha na autenticação. HTTP ' + (authStatus === null ? 'desconhecido' : authStatus), authBody);
+                }
+            
+                token = extractToken(req, authBody);
+            
+                // PASSO 2: Coletar os Pools
+                req.clearHeader();
+                req.addHeader('X-Auth-Token: ' + token);
+                req.addHeader('Accept: application/json');
+            
+                dataBody = req.post(dataUrl, '');
+                dataStatus = getStatusCode(req, dataBody);
+            
+                if (dataStatus !== 200) {
+                    fail('Falha ao coletar lsmdiskgrp. HTTP ' + (dataStatus === null ? 'desconhecido' : dataStatus), dataBody);
+                }
+            
+                dataParsed = parseJsonSafe(dataBody, '/rest/v1/lsmdiskgrp');
+            
+                if (!(dataParsed instanceof Array)) {
+                    fail('Formato inesperado: a API não retornou um array de Pools JSON.', dataBody);
+                }
+            
+                return JSON.stringify(dataParsed);
+            
+            } catch (e) {
+                if (typeof e === 'string') { throw e; }
+                fail('Erro inesperado na execução do script.', String(e));
+            }
+          timeout: 30s
+          parameters:
+            -
+              name: base_url
+              value: '{$API.URL}'
+            -
+              name: username
+              value: '{$API.USER}'
+            -
+              name: password
+              value: '{$API.PASS}'
+        -
+          uuid: 763cce2e60d24a11a024c734033c4f98
+          name: 'Storage: Get PSUs'
+          type: SCRIPT
+          key: Get.PSUs
+          delay: 15m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            // --- LEITURA DE PARÂMETROS NATIVA DO ZABBIX ---
+            var params = {};
+            try {
+                params = JSON.parse(value);
+            } catch (e) {
+                throw JSON.stringify({ error: "O Zabbix não enviou os parâmetros no formato JSON. Verifique a seção Parameters do item." });
+            }
+            
+            var baseUrl = params.base_url;
+            var username = params.username;
+            var password = params.password;
+            
+            function fail(msg, details) {
+                var out = { error: msg };
+                if (details) { out.details = details; }
+                throw JSON.stringify(out);
+            }
+            
+            function normalizeBaseUrl(url) {
+                return url.replace(/\/+$/, '');
+            }
+            
+            function parseJsonSafe(raw, context) {
+                if (raw === null || raw === undefined || raw === '') {
+                    fail('Resposta vazia da API em ' + context);
+                }
+                try {
+                    return JSON.parse(raw);
+                } catch (e) {
+                    fail('Resposta não é JSON válido em ' + context, String(e));
+                }
+            }
+            
+            function getStatusCode(req, fallbackBody) {
+                var status = null;
+                try { status = req.getStatus(); } catch (e) {}
+            
+                if (status !== null && status !== undefined) {
+                    return parseInt(status, 10);
+                }
+            
+                if (fallbackBody && typeof fallbackBody === 'string') {
+                    var m = fallbackBody.match(/^HTTP\/\d\.\d\s+(\d{3})/m);
+                    if (m) { return parseInt(m[1], 10); }
+                }
+                return null;
+            }
+            
+            function getHeaderValueCaseInsensitive(headers, name) {
+                if (!headers) { return null; }
+                var lowerName = String(name).toLowerCase();
+                for (var key in headers) {
+                    if (headers.hasOwnProperty(key) && String(key).toLowerCase() === lowerName) {
+                        return headers[key];
+                    }
+                }
+                return null;
+            }
+            
+            function extractToken(req, authBody) {
+                var headers = null;
+                var token = null;
+            
+                try { headers = req.getHeaders(); } catch (e) { headers = null; }
+            
+                token = getHeaderValueCaseInsensitive(headers, 'X-Auth-Token');
+            
+                if (!token && typeof authBody === 'string' && authBody.length > 0) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(authBody); } catch (eJson) { parsed = null; }
+            
+                    if (parsed && typeof parsed === 'object') {
+                        token = parsed.token || parsed.auth_token || parsed['X-Auth-Token'] || parsed.x_auth_token || null;
+                    }
+            
+                    if (!token) {
+                        var m = authBody.match(/"(?:token|auth_token|x_auth_token|X-Auth-Token)"\s*:\s*"([^"]+)"/);
+                        if (m) { token = m[1]; }
+                    }
+                }
+            
+                if (!token || String(token).trim() === '') {
+                    fail('Token de autenticação não encontrado (header ou corpo).', authBody);
+                }
+                return String(token).trim();
+            }
+            
+            // --- VALIDAÇÃO INICIAL ---
+            if (!baseUrl) { fail('Parâmetro obrigatório ausente: base_url'); }
+            if (!username) { fail('Parâmetro obrigatório ausente: username'); }
+            if (!password) { fail('Parâmetro obrigatório ausente: password'); }
+            
+            baseUrl = normalizeBaseUrl(baseUrl);
+            
+            var authUrl = baseUrl + '/rest/v1/auth';
+            // URL alterada para buscar as fontes de energia (PSUs)
+            var dataUrl = baseUrl + '/rest/v1/lsenclosurepsu'; 
+            
+            // --- INSTÂNCIA HTTP ---
+            var req = new HttpRequest();
+            
+            var authBody;
+            var authStatus;
+            var token;
+            var dataBody;
+            var dataStatus;
+            var dataParsed;
+            
+            try {
+                // PASSO 1: Solicitar Token
+                req.clearHeader();
+                req.addHeader('Content-Type: application/json');
+                req.addHeader('X-Auth-Username: ' + username);
+                req.addHeader('X-Auth-Password: ' + password);
+            
+                authBody = req.post(authUrl, '');
+                authStatus = getStatusCode(req, authBody);
+            
+                if (authStatus !== 200 && authStatus !== 201) {
+                    fail('Falha na autenticação. HTTP ' + (authStatus === null ? 'desconhecido' : authStatus), authBody);
+                }
+            
+                token = extractToken(req, authBody);
+            
+                // PASSO 2: Coletar as PSUs
+                req.clearHeader();
+                req.addHeader('X-Auth-Token: ' + token);
+                req.addHeader('Accept: application/json');
+            
+                dataBody = req.post(dataUrl, '');
+                dataStatus = getStatusCode(req, dataBody);
+            
+                if (dataStatus !== 200) {
+                    fail('Falha ao coletar lsenclosurepsu. HTTP ' + (dataStatus === null ? 'desconhecido' : dataStatus), dataBody);
+                }
+            
+                dataParsed = parseJsonSafe(dataBody, '/rest/v1/lsenclosurepsu');
+            
+                if (!(dataParsed instanceof Array)) {
+                    fail('Formato inesperado: a API não retornou um array de PSUs JSON.', dataBody);
+                }
+            
+                return JSON.stringify(dataParsed);
+            
+            } catch (e) {
+                if (typeof e === 'string') { throw e; }
+                fail('Erro inesperado na execução do script.', String(e));
+            }
+          timeout: 30s
+          parameters:
+            -
+              name: base_url
+              value: '{$API.URL}'
+            -
+              name: password
+              value: '{$API.PASS}'
+            -
+              name: username
+              value: '{$API.USER}'
+        -
+          uuid: 62bbdecf534642b88939785c27bde8bc
+          name: 'Storage: Get Volumes(VDisks)'
+          type: SCRIPT
+          key: Get.Volumes_vdisks
+          delay: 15m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            // --- LEITURA DE PARÂMETROS NATIVA DO ZABBIX ---
+            var params = {};
+            try {
+                params = JSON.parse(value);
+            } catch (e) {
+                throw JSON.stringify({ error: "O Zabbix não enviou os parâmetros no formato JSON. Verifique a seção Parameters do item." });
+            }
+            
+            var baseUrl = params.base_url;
+            var username = params.username;
+            var password = params.password;
+            
+            function fail(msg, details) {
+                var out = { error: msg };
+                if (details) { out.details = details; }
+                throw JSON.stringify(out);
+            }
+            
+            function normalizeBaseUrl(url) {
+                return url.replace(/\/+$/, '');
+            }
+            
+            function parseJsonSafe(raw, context) {
+                if (raw === null || raw === undefined || raw === '') {
+                    fail('Resposta vazia da API em ' + context);
+                }
+                try {
+                    return JSON.parse(raw);
+                } catch (e) {
+                    fail('Resposta não é JSON válido em ' + context, String(e));
+                }
+            }
+            
+            function getStatusCode(req, fallbackBody) {
+                var status = null;
+                try { status = req.getStatus(); } catch (e) {}
+            
+                if (status !== null && status !== undefined) {
+                    return parseInt(status, 10);
+                }
+            
+                if (fallbackBody && typeof fallbackBody === 'string') {
+                    var m = fallbackBody.match(/^HTTP\/\d\.\d\s+(\d{3})/m);
+                    if (m) { return parseInt(m[1], 10); }
+                }
+                return null;
+            }
+            
+            function getHeaderValueCaseInsensitive(headers, name) {
+                if (!headers) { return null; }
+                var lowerName = String(name).toLowerCase();
+                for (var key in headers) {
+                    if (headers.hasOwnProperty(key) && String(key).toLowerCase() === lowerName) {
+                        return headers[key];
+                    }
+                }
+                return null;
+            }
+            
+            function extractToken(req, authBody) {
+                var headers = null;
+                var token = null;
+            
+                try { headers = req.getHeaders(); } catch (e) { headers = null; }
+            
+                token = getHeaderValueCaseInsensitive(headers, 'X-Auth-Token');
+            
+                if (!token && typeof authBody === 'string' && authBody.length > 0) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(authBody); } catch (eJson) { parsed = null; }
+            
+                    if (parsed && typeof parsed === 'object') {
+                        token = parsed.token || parsed.auth_token || parsed['X-Auth-Token'] || parsed.x_auth_token || null;
+                    }
+            
+                    if (!token) {
+                        var m = authBody.match(/"(?:token|auth_token|x_auth_token|X-Auth-Token)"\s*:\s*"([^"]+)"/);
+                        if (m) { token = m[1]; }
+                    }
+                }
+            
+                if (!token || String(token).trim() === '') {
+                    fail('Token de autenticação não encontrado (header ou corpo).', authBody);
+                }
+                return String(token).trim();
+            }
+            
+            // --- VALIDAÇÃO INICIAL ---
+            if (!baseUrl) { fail('Parâmetro obrigatório ausente: base_url'); }
+            if (!username) { fail('Parâmetro obrigatório ausente: username'); }
+            if (!password) { fail('Parâmetro obrigatório ausente: password'); }
+            
+            baseUrl = normalizeBaseUrl(baseUrl);
+            
+            var authUrl = baseUrl + '/rest/v1/auth';
+            // URL alterada para buscar os volumes (vdisks)
+            var dataUrl = baseUrl + '/rest/v1/lsvdisk'; 
+            
+            // --- INSTÂNCIA HTTP ---
+            var req = new HttpRequest();
+            
+            var authBody;
+            var authStatus;
+            var token;
+            var dataBody;
+            var dataStatus;
+            var dataParsed;
+            
+            try {
+                // PASSO 1: Solicitar Token
+                req.clearHeader();
+                req.addHeader('Content-Type: application/json');
+                req.addHeader('X-Auth-Username: ' + username);
+                req.addHeader('X-Auth-Password: ' + password);
+            
+                authBody = req.post(authUrl, '');
+                authStatus = getStatusCode(req, authBody);
+            
+                if (authStatus !== 200 && authStatus !== 201) {
+                    fail('Falha na autenticação. HTTP ' + (authStatus === null ? 'desconhecido' : authStatus), authBody);
+                }
+            
+                token = extractToken(req, authBody);
+            
+                // PASSO 2: Coletar os VDisks
+                req.clearHeader();
+                req.addHeader('X-Auth-Token: ' + token);
+                req.addHeader('Accept: application/json');
+            
+                dataBody = req.post(dataUrl, '');
+                dataStatus = getStatusCode(req, dataBody);
+            
+                if (dataStatus !== 200) {
+                    fail('Falha ao coletar lsvdisk. HTTP ' + (dataStatus === null ? 'desconhecido' : dataStatus), dataBody);
+                }
+            
+                dataParsed = parseJsonSafe(dataBody, '/rest/v1/lsvdisk');
+            
+                if (!(dataParsed instanceof Array)) {
+                    fail('Formato inesperado: a API não retornou um array de VDisks JSON.', dataBody);
+                }
+            
+                // --- PASSO 3: TRATAMENTO DE CAPACIDADE (Injetando capacity_bytes) ---
+                for (var i = 0; i < dataParsed.length; i++) {
+                    var vdisk = dataParsed[i];
+                    
+                    // Garante que o campo original existe e é uma string antes de processar
+                    if (vdisk && typeof vdisk.capacity === 'string') {
+                        var rawValue = vdisk.capacity.trim().toUpperCase();
+                        var match = rawValue.match(/([0-9.]+)\s*(KB|MB|GB|TB|PB)/);
+            
+                        if (match) {
+                            var num = parseFloat(match[1]);
+                            var unit = match[2];
+                            var bytes = num;
+            
+                            if (unit === 'KB') { bytes = num * 1024; }
+                            else if (unit === 'MB') { bytes = num * 1048576; }
+                            else if (unit === 'GB') { bytes = num * 1073741824; }
+                            else if (unit === 'TB') { bytes = num * 1099511627776; }
+                            else if (unit === 'PB') { bytes = num * 1125899906842624; }
+            
+                            // Cria uma nova chave no JSON com o valor numérico puro
+                            vdisk.capacity_bytes = parseFloat(bytes.toFixed(2));
+                        } else {
+                            // Fallback caso a API mande um número puro sem letras
+                            var parsedNum = parseFloat(rawValue);
+                            if (!isNaN(parsedNum)) {
+                                vdisk.capacity_bytes = parsedNum;
+                            }
+                        }
+                    }
+                }
+            
+                return JSON.stringify(dataParsed);
+            
+            } catch (e) {
+                if (typeof e === 'string') { throw e; }
+                fail('Erro inesperado na execução do script.', String(e));
+            }
+          timeout: 30s
+          parameters:
+            -
+              name: base_url
+              value: '{$API.URL}'
+            -
+              name: password
+              value: '{$API.PASS}'
+            -
+              name: username
+              value: '{$API.USER}'
+      discovery_rules:
+        -
+          uuid: 5b49539ba11c427bb0b8cee7b7eb5392
+          name: 'Storage Pools Discovery'
+          type: DEPENDENT
+          key: Pools.dis
+          delay: '0'
+          lifetime: 7d
+          item_prototypes:
+            -
+              uuid: bc6ae6f33264416fa3119b43292a9bd6
+              name: 'Pool "{#POOL_NAME}": Capacidade Total'
+              type: DEPENDENT
+              key: 'storage.pool.capacity["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              value_type: FLOAT
+              units: B
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].capacity.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - '([0-9.]+)'
+                    - \1
+                -
+                  type: MULTIPLIER
+                  parameters:
+                    - '1099511627776'
+              master_item:
+                key: Get.Pools
+            -
+              uuid: b5fa3425a42d485485de4a35847a0765
+              name: 'Pool "{#POOL_NAME}": Tamanho do Extent'
+              type: DEPENDENT
+              key: 'storage.pool.extent_size["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].extent_size.first()'
+              master_item:
+                key: Get.Pools
+            -
+              uuid: e2b3df0d2cce45fcb5ee34166cb5fa10
+              name: 'Pool "{#POOL_NAME}": Capacidade Livre'
+              type: DEPENDENT
+              key: 'storage.pool.free_capacity["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              value_type: FLOAT
+              units: B
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].free_capacity.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - '([0-9.]+)'
+                    - \1
+                -
+                  type: MULTIPLIER
+                  parameters:
+                    - '1099511627776'
+              master_item:
+                key: Get.Pools
+              trigger_prototypes:
+                -
+                  uuid: e2c6f0aab46d4bd4b5e30fbc9013b362
+                  expression: 'max(/TEMPLATE API STORAGE FS/storage.pool.free_capacity["{#POOL_NAME}:{#POOL_ID}"],#3)<536870912000'
+                  name: 'Storage: Pool "{#POOL_NAME}" com capacidade crítica (<500G)'
+                  priority: HIGH
+                  description: |
+                    Significado: O pool de armazenamento esgotou quase toda a sua capacidade física real disponível para gravação de novos blocos de dados.
+                    
+                    Impacto: Se o pool atingir 100% de uso de sua capacidade real, o storage bloqueará novas operações de escrita. Em ambientes que utilizam Thin Provisioning, a falta de espaço real fará com que os volumes virtuais (VDisks) entrem em estado "offline por falta de espaço". O impacto imediato é o travamento abrupto de sistemas operacionais, queda de aplicações e alto risco de corrupção em bancos de dados (Oracle, SQL, etc.) que não conseguirão efetivar transações no disco. Requer expansão emergencial do pool (adição de novos MDisks) ou exclusão urgente de volumes obsoletos para liberar espaço.
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: 2ede900fede448a5b4910c10250da045
+              name: 'Pool "{#POOL_NAME}": Quantidade de MDisks'
+              type: DEPENDENT
+              key: 'storage.pool.mdisk_count["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].mdisk_count.first()'
+              master_item:
+                key: Get.Pools
+            -
+              uuid: a109d7a954824332b5112eac736f25f9
+              name: 'Pool "{#POOL_NAME}": Capacidade Real'
+              type: DEPENDENT
+              key: 'storage.pool.real_capacity["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              value_type: FLOAT
+              units: B
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].real_capacity.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - '([0-9.]+)'
+                    - \1
+                -
+                  type: MULTIPLIER
+                  parameters:
+                    - '1099511627776'
+              master_item:
+                key: Get.Pools
+            -
+              uuid: 0a4f80c6da2f4a88ad1a381e184966bd
+              name: 'Pool "{#POOL_NAME}": Status'
+              type: DEPENDENT
+              key: 'storage.pool.status["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              valuemap:
+                name: Status
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].status.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - online
+                    - '1'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: Get.Pools
+              trigger_prototypes:
+                -
+                  uuid: e0b19011011b415e93b75b9725b682c1
+                  expression: 'max(/TEMPLATE API STORAGE FS/storage.pool.status["{#POOL_NAME}:{#POOL_ID}"],#3)=0'
+                  name: 'Storage: Pool "{#POOL_NAME}" está Offline/Degradado'
+                  priority: HIGH
+                  description: |
+                    Significado: O pool de armazenamento (Storage Pool) não está operando normalmente (podendo estar offline ou degradado), indicando que um ou mais discos físicos (MDisks) subjacentes falharam ou perderam comunicação.
+                    
+                    Impacto: Como o pool agrupa os discos físicos para fornecer espaço aos volumes virtuais (VDisks), a degradação afeta diretamente a performance e a segurança do armazenamento. Se o pool entrar em estado offline, a redundância foi perdida e a comunicação de dados parou. O impacto imediato é a indisponibilidade total e travamento de todos os servidores, máquinas virtuais (VMware) e bancos de dados que possuem discos provisionados dentro deste pool. Requer investigação imediata dos arrays RAID e acionamento do suporte de hardware.
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: ad193c328d714b6083fe1b01f17c1b86
+              name: 'Pool "{#POOL_NAME}": Capacidade Usada'
+              type: DEPENDENT
+              key: 'storage.pool.used["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              value_type: FLOAT
+              units: B
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].used_capacity.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - '([0-9.]+)'
+                    - \1
+                -
+                  type: MULTIPLIER
+                  parameters:
+                    - '1099511627776'
+              master_item:
+                key: Get.Pools
+            -
+              uuid: 6d113a9501c9470990eda8d80cc233ad
+              name: 'Pool "{#POOL_NAME}": Quantidade de VDisks'
+              type: DEPENDENT
+              key: 'storage.pool.vdisk_count["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].vdisk_count.first()'
+              master_item:
+                key: Get.Pools
+            -
+              uuid: 7decf94d9c6f4183a99a4beb29c23c35
+              name: 'Pool "{#POOL_NAME}": Capacidade Virtual'
+              type: DEPENDENT
+              key: 'storage.pool.virtual_capacity["{#POOL_NAME}:{#POOL_ID}"]'
+              delay: '0'
+              history: 31d
+              value_type: FLOAT
+              units: B
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.name == "{#POOL_NAME}")].virtual_capacity.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - '([0-9.]+)'
+                    - \1
+                -
+                  type: MULTIPLIER
+                  parameters:
+                    - '1099511627776'
+              master_item:
+                key: Get.Pools
+          master_item:
+            key: Get.Pools
+          lld_macro_paths:
+            -
+              lld_macro: '{#POOL_ID}'
+              path: $.id
+            -
+              lld_macro: '{#POOL_NAME}'
+              path: $.name
+        -
+          uuid: de51d93ef2ec4fbc92b02bcfcd0cdcd4
+          name: 'Storage Pools Hosts'
+          type: DEPENDENT
+          key: Pools.Hosts
+          delay: '0'
+          lifetime: 7d
+          item_prototypes:
+            -
+              uuid: 732c725383a149b68930daf9ed94dc3c
+              name: 'Cluster ID - Host: {#HOST_NAME}'
+              type: DEPENDENT
+              key: 'lshost.cluster_id[{#HOST_ID}]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].host_cluster_id.first()'
+                -
+                  type: CHECK_JSON_ERROR
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].host_cluster_id.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: N/A
+              master_item:
+                key: Get.Hosts
+            -
+              uuid: d6a5fcbc0ecd43ba8604e0169972d7f0
+              name: 'Cluster do Host: {#HOST_NAME}'
+              type: DEPENDENT
+              key: 'lshost.cluster_name[{#HOST_ID}]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].host_cluster_name.first()'
+                -
+                  type: CHECK_JSON_ERROR
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].host_cluster_name.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: 'Sem Cluster'
+              master_item:
+                key: Get.Hosts
+            -
+              uuid: b10157c91a184f99bfab0e9917ee585c
+              name: 'IOGrp Count - Host: {#HOST_NAME}'
+              type: DEPENDENT
+              key: 'lshost.iogrp_count[{#HOST_ID}]'
+              delay: '0'
+              history: 31d
+              discover: NO_DISCOVER
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].iogrp_count.first()'
+              master_item:
+                key: Get.Hosts
+            -
+              uuid: 7eb3bd0c5f224c7daa0bcbcc06b0f010
+              name: 'Portset - Host: {#HOST_NAME}'
+              type: DEPENDENT
+              key: 'lshost.portset_name[{#HOST_ID}]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].portset_name.first()'
+              master_item:
+                key: Get.Hosts
+            -
+              uuid: c0b03d05ab684b5b85cf2756ce3836dc
+              name: 'Portas Ativas - Host: "{#HOST_NAME}"'
+              type: DEPENDENT
+              key: 'lshost.port_count[{#HOST_ID}]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].port_count.first()'
+              master_item:
+                key: Get.Hosts
+              trigger_prototypes:
+                -
+                  uuid: 9005779e3fb547a6a503f4c152176d1b
+                  expression: 'max(/TEMPLATE API STORAGE FS/lshost.port_count[{#HOST_ID}],#3)=0'
+                  name: 'Storage: Host {#HOST_NAME} com 0 portas ativas (Sem comunicação)'
+                  priority: HIGH
+                  description: |
+                    Significado: O número de portas (paths) ativas logadas no storage para este host específico caiu para zero absoluto.
+                    Impacto: Há uma perda total e confirmada de caminhos de dados entre o servidor e o storage. Sem portas ativas, é fisicamente impossível processar qualquer leitura ou escrita. Isso resulta na parada súbita e indisponibilidade total do ambiente hospedado neste servidor (Sistemas operacionais entram em 'read-only' ou apresentam tela azul/kernel panic). A falha não é necessariamente no storage, mas indica um problema grave no meio do caminho: queda de um switch core/SAN, rompimento de fibra óptica, falha total nas placas HBA do servidor ou o próprio servidor foi desligado abruptamente.
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: 015bd5946af54d77863b7a18a716e5ec
+              name: 'Protocolo - Host: {#HOST_NAME}'
+              type: DEPENDENT
+              key: 'lshost.protocol[{#HOST_ID}]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].protocol.first()'
+              master_item:
+                key: Get.Hosts
+            -
+              uuid: 9f2bf5510d5744bcaeca45ef2aa1d26e
+              name: 'Status do Host: "{#HOST_NAME}"'
+              type: DEPENDENT
+              key: 'lshost.status[{#HOST_ID}]'
+              delay: '0'
+              history: 31d
+              valuemap:
+                name: Status
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].status.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - online
+                    - '1'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: Get.Hosts
+              trigger_prototypes:
+                -
+                  uuid: b55d9b8cf59149d095c7cba354341cd3
+                  expression: 'max(/TEMPLATE API STORAGE FS/lshost.status[{#HOST_ID}],#3)=0'
+                  name: 'Storage: Host "{#HOST_NAME}" está Offline'
+                  priority: HIGH
+                  description: |
+                    Significado: O host mapeado no storage perdeu a comunicação esperada com as controladoras ou está reportando um status anormal (como offline ou degradado).
+                    Impacto: O storage não consegue mais se comunicar plenamente com os adaptadores (HBAs ou iniciadores iSCSI) desse servidor específico. O servidor perdeu (ou está em vias de perder) o acesso aos discos lógicos (LUNs) mapeados para ele. Isso causa indisponibilidade imediata das aplicações atreladas ao host, travamento de máquinas virtuais (em caso de hosts VMware/Hyper-V) ou travamento de I/O em bancos de dados, podendo levar à corrupção. Requer verificação imediata do status físico do servidor, do cabeamento e do zoneamento dos switches SAN (Fabric).
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: 629cebfb11f24181bbe52f98594f6c52
+              name: 'Ungrouped Mapping - Host: {#HOST_NAME}'
+              type: DEPENDENT
+              key: 'lshost.ungrouped_mapping[{#HOST_ID}]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#HOST_ID}")].ungrouped_volume_mapping.first()'
+              master_item:
+                key: Get.Hosts
+          master_item:
+            key: Get.Hosts
+          lld_macro_paths:
+            -
+              lld_macro: '{#HOST_ID}'
+              path: $.id
+            -
+              lld_macro: '{#HOST_NAME}'
+              path: $.name
+        -
+          uuid: 4dda2a6470e44197a60a3037cdeb65de
+          name: 'Storage Pools LsCanister'
+          type: DEPENDENT
+          key: Pools.lsCanister
+          delay: '0'
+          lifetime: 7d
+          item_prototypes:
+            -
+              uuid: d7db773516494cfd980ee96128745a5c
+              name: 'Status do Canister: "{#NODE_NAME}" (Enclosure: "{#ENCLOSURE_ID}" / ID: "{#CANISTER_ID}")'
+              type: DEPENDENT
+              key: 'canister.status["{#ENCLOSURE_ID}:#CANISTER_ID}"]'
+              delay: '0'
+              history: 31d
+              valuemap:
+                name: Status
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.enclosure_id == "{#ENCLOSURE_ID}" && @.canister_id == "{#CANISTER_ID}")].status.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - online
+                    - '1'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: Get.Canisters
+              trigger_prototypes:
+                -
+                  uuid: 38b88c6066d6403094bf4b2d54bf1add
+                  expression: 'max(/TEMPLATE API STORAGE FS/canister.status["{#ENCLOSURE_ID}:#CANISTER_ID}"],#3)=0'
+                  name: 'Controladora "{#NODE_NAME}" (ID: "{#CANISTER_ID}") offline no Enclosure "{#ENCLOSURE_ID}"!'
+                  opdata: 'Status atual: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: |
+                    Significado: O nó de controle (Canister) do storage não está operando normalmente (podendo estar offline, em estado de serviço ou degradado).
+                    
+                    Impacto: A controladora deixou de processar I/O. Como o storage trabalha com alta disponibilidade (redundância de nós), o impacto imediato é a degradação de performance, já que todo o tráfego foi redirecionado para a controladora sobrevivente. A redundância foi perdida: se o segundo Canister falhar, ocorrerá a parada total do storage e a indisponibilidade imediata de todos os servidores e bancos de dados (VMware, Oracle, etc.) conectados a ele. Requer acionamento imediato do suporte de hardware (IBM).
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: 120b44673a76428595b1c7e7340e5b23
+              name: 'Tipo do Canister: "{#NODE_NAME}" (Enclosure: "{#ENCLOSURE_ID}" / ID: "{#CANISTER_ID}")'
+              type: DEPENDENT
+              key: 'canister.type["{#ENCLOSURE_ID}:{#CANISTER_ID}"]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.enclosure_id == "{#ENCLOSURE_ID}" && @.canister_id == "{#CANISTER_ID}")].type.first()'
+                -
+                  type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 24h
+              master_item:
+                key: Get.Canisters
+          master_item:
+            key: Get.Canisters
+          lld_macro_paths:
+            -
+              lld_macro: '{#ENCLOSURE_ID}'
+              path: $.enclosure_id
+            -
+              lld_macro: '{#CANISTER_ID}'
+              path: $.canister_id
+            -
+              lld_macro: '{#NODE_NAME}'
+              path: $.node_name
+        -
+          uuid: b5b0399d0b5642d7a4a160190044cfdc
+          name: 'Storage Pools LsDrive'
+          type: DEPENDENT
+          key: Pools.lsdrive
+          delay: '0'
+          lifetime: 7d
+          item_prototypes:
+            -
+              uuid: 88c03a2130b446f8b9087ba9f84c70f3
+              name: 'Capacidade do disco: "{#DRIVE_NAME}" (ID: "{#DRIVE_ID}")'
+              type: DEPENDENT
+              key: 'drive.capacity["{#DRIVE_ID}"]'
+              delay: '0'
+              history: 31d
+              value_type: FLOAT
+              units: B
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#DRIVE_ID}")].capacity.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - '([0-9.]+)'
+                    - \1
+                -
+                  type: MULTIPLIER
+                  parameters:
+                    - '1099511627776'
+              master_item:
+                key: Get.lsdrive
+            -
+              uuid: 3779ee77c5b34473b4c16201bb3fffc4
+              name: 'Status do disco: "{#DRIVE_NAME}" (ID: "{#DRIVE_ID}")'
+              type: DEPENDENT
+              key: 'drive.status["{#DRIVE_ID}"]'
+              delay: '0'
+              history: 31d
+              valuemap:
+                name: Status
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#DRIVE_ID}")].status.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - online
+                    - '1'
+                  error_handler: CUSTOM_VALUE
+              master_item:
+                key: Get.lsdrive
+              trigger_prototypes:
+                -
+                  uuid: f2c289f83d7f4d41adffaa2160867612
+                  expression: 'max(/TEMPLATE API STORAGE FS/drive.status["{#DRIVE_ID}"],#3)=0'
+                  name: 'Disco "{#DRIVE_NAME}" (ID: "{#DRIVE_ID}") não está online!'
+                  opdata: 'Status atual: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: |
+                    Significado: O disco físico (Drive/MDisk) gerenciado pelo storage deixou de reportar o status "online", podendo estar offline, degradado ou em falha.
+                    
+                    Impacto: O pool de armazenamento (MDisk Group) ao qual este disco pertence perderá redundância e entrará em estado degradado. O storage precisará iniciar o rebuild (reconstrução de dados) usando os discos de spare. Há impacto na performance geral de I/O e risco crítico de perda de dados caso um segundo disco do mesmo array falhe antes do fim da reconstrução. Requer substituição física da peça (RMA).
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: feef8c2281344b04918c8e94d7555cd5
+              name: 'Tecnologia do disco: {#DRIVE_NAME} (ID: {#DRIVE_ID})'
+              type: DEPENDENT
+              key: 'drive.tech_type[{#DRIVE_ID}]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#DRIVE_ID}")].tech_type.first()'
+                -
+                  type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 24h
+              master_item:
+                key: Get.lsdrive
+          master_item:
+            key: Get.lsdrive
+          lld_macro_paths:
+            -
+              lld_macro: '{#DRIVE_ID}'
+              path: $.id
+            -
+              lld_macro: '{#DRIVE_NAME}'
+              path: $.mdisk_name
+        -
+          uuid: 7cc59b7b1fcd41ffad9173b8b84c7ff3
+          name: 'Storage Pools LsEnclosure'
+          type: DEPENDENT
+          key: Pools.LsEnclousure
+          delay: '0'
+          lifetime: 7d
+          item_prototypes:
+            -
+              uuid: a05a9339783a489caec1dc02b34f1165
+              name: 'Canisters Online - Enclosure: "{#ENCLOSURE_ID}"'
+              type: DEPENDENT
+              key: 'enclosure.canisters.online["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].online_canisters.first()'
+              master_item:
+                key: Get.LsEnclosure
+            -
+              uuid: be7eb5578bb34e33a0e594d8ba5deb5c
+              name: 'Total de Canisters - Enclosure: "{#ENCLOSURE_ID}"'
+              type: DEPENDENT
+              key: 'enclosure.canisters.total["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].total_canisters.first()'
+              master_item:
+                key: Get.LsEnclosure
+            -
+              uuid: 23cc044cb8a24299a3d373a7f634a622
+              name: 'Fans Online - Enclosure: "{#ENCLOSURE_ID}"'
+              type: DEPENDENT
+              key: 'enclosure.fans.online["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].online_fan_modules.first()'
+              master_item:
+                key: Get.LsEnclosure
+            -
+              uuid: 3063b1255539435aab87d1d4ea67d5ab
+              name: 'Total de Fans - Enclosure: "{#ENCLOSURE_ID}"'
+              type: DEPENDENT
+              key: 'enclosure.fans.total["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].total_fan_modules.first()'
+              master_item:
+                key: Get.LsEnclosure
+            -
+              uuid: 4135b0a8d9e442f180987affb3cee6d5
+              name: 'Modelo do Enclosure: "{#ENCLOSURE_ID}" (SN: "{#SERIAL_NUMBER}")'
+              type: DEPENDENT
+              key: 'enclosure.product_mtm["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].product_MTM.first()'
+                -
+                  type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 24h
+              master_item:
+                key: Get.LsEnclosure
+            -
+              uuid: ac6ec8d4686445d980c9a3c818b14b01
+              name: 'PSUs Online - Enclosure: "{#ENCLOSURE_ID}"'
+              type: DEPENDENT
+              key: 'enclosure.psus.online["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].online_PSUs.first()'
+              master_item:
+                key: Get.LsEnclosure
+            -
+              uuid: 43133b0239524ec7918c93f62f2e9d5b
+              name: 'Total de PSUs - Enclosure: "{#ENCLOSURE_ID}"'
+              type: DEPENDENT
+              key: 'enclosure.psus.total["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].total_PSUs.first()'
+              master_item:
+                key: Get.LsEnclosure
+            -
+              uuid: 440a4e88e7f649ea8a554c32d8c466ca
+              name: 'Serial Number do Enclosure: "{#ENCLOSURE_ID}"'
+              type: DEPENDENT
+              key: 'enclosure.serial_number["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].serial_number.first()'
+              master_item:
+                key: Get.LsEnclosure
+            -
+              uuid: 81cdce5e3b60427998cc9b20321329c4
+              name: 'Status do Enclosure: "{#ENCLOSURE_ID}" (SN: "{#SERIAL_NUMBER}")'
+              type: DEPENDENT
+              key: 'enclosure.status["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              valuemap:
+                name: Status
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].status.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - online
+                    - '1'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: Get.LsEnclosure
+              trigger_prototypes:
+                -
+                  uuid: 769ac5ac541c4dfc95594b946e9d016b
+                  expression: 'max(/TEMPLATE API STORAGE FS/enclosure.status["{#ENCLOSURE_ID}"],#3)=0'
+                  name: 'Storage: Enclosure "{#ENCLOSURE_ID}" em estado crítico/offline'
+                  priority: HIGH
+                  description: |
+                    Significado: A gaveta física (Enclosure) do storage alterou seu status global para um estado anormal (ex: offline ou degradado), indicando um problema severo no chassi ou no painel traseiro (backplane).
+                    Impacto: Indica uma falha crítica que afeta múltiplos componentes simultaneamente. O impacto é a indisponibilidade severa: os discos contidos nesta gaveta podem ficar inacessíveis, derrubando os volumes (VDisks) e causando travamento completo de todos os servidores que dependem desses dados. A parada total de I/O da gaveta pode já estar em andamento. Requer acionamento emergencial do suporte de hardware.
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: 0af751edf4794819a68c9a63ca5a60e9
+              name: 'Tipo do Enclosure: "{#ENCLOSURE_ID}" (SN: "{#SERIAL_NUMBER}")'
+              type: DEPENDENT
+              key: 'enclosure.type["{#ENCLOSURE_ID}"]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#ENCLOSURE_ID}")].type.first()'
+              master_item:
+                key: Get.LsEnclosure
+          trigger_prototypes:
+            -
+              uuid: ff554ab6557e4fd5a35cf1dc0dd4eecf
+              expression: 'max(/TEMPLATE API STORAGE FS/enclosure.fans.online["{#ENCLOSURE_ID}"],#3)<max(/TEMPLATE API STORAGE FS/enclosure.fans.total["{#ENCLOSURE_ID}"],#3)'
+              name: 'Storage: Falha de Refrigeração (Fan Offline no Enclosure "{#ENCLOSURE_ID}")'
+              priority: HIGH
+              description: |
+                Significado: Um ou mais módulos de ventilação (Fan) do Enclosure do storage pararam de funcionar ou estão operando abaixo da rotação mínima exigida.
+                Impacto: O equipamento perdeu sua capacidade ideal de refrigeração. O impacto imediato é o aumento rápido da temperatura interna da gaveta. Se a temperatura atingir limites críticos, o storage ativará mecanismos de autoproteção e desligará forçadamente as controladoras e os discos para evitar danos permanentes (queima dos componentes). Esse desligamento de proteção causará a parada total de todo o ambiente de TI conectado a ele. Requer acionamento imediato do suporte de hardware.
+              manual_close: 'YES'
+              dependencies:
+                -
+                  name: 'IBM Storage: Falha ao coletar dados via API'
+                  expression: |
+                    nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: 9079a34a58054e8ea54e960b6cff81ff
+              expression: 'max(/TEMPLATE API STORAGE FS/enclosure.canisters.online["{#ENCLOSURE_ID}"],#3)<max(/TEMPLATE API STORAGE FS/enclosure.canisters.total["{#ENCLOSURE_ID}"],#3)'
+              name: 'Storage: Perda de redundância de Controladora (Canister Offline no Enclosure "{#ENCLOSURE_ID}")'
+              priority: HIGH
+              description: |
+                Significado: O nó de controle (Canister) do storage não está operando normalmente (podendo estar offline, em estado de serviço ou degradado).
+                Impacto: A controladora deixou de processar I/O. Como o storage trabalha com alta disponibilidade (redundância de nós), o impacto imediato é a degradação de performance, já que todo o tráfego foi redirecionado para a controladora sobrevivente. A redundância foi perdida: se o segundo Canister falhar, ocorrerá a parada total do storage e a indisponibilidade imediata de todos os servidores e bancos de dados (VMware, Oracle, etc.) conectados a ele. Requer acionamento imediato do suporte de hardware (IBM).
+              manual_close: 'YES'
+              dependencies:
+                -
+                  name: 'IBM Storage: Falha ao coletar dados via API'
+                  expression: |
+                    nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: d0fdf09bcf0d45279da98c4f3140e48f
+              expression: 'max(/TEMPLATE API STORAGE FS/enclosure.psus.online["{#ENCLOSURE_ID}"],#3)<max(/TEMPLATE API STORAGE FS/enclosure.psus.total["{#ENCLOSURE_ID}"],#3)'
+              name: 'Storage: Perda de redundância de Energia (PSU Offline no Enclosure "{#ENCLOSURE_ID}")'
+              priority: HIGH
+              description: |
+                Significado: Uma das fontes de alimentação (PSU - Power Supply Unit) do Enclosure do storage falhou, está sem energia ou foi removida.
+                Impacto: O storage perdeu a redundância de energia elétrica. Embora continue operando com a PSU sobrevivente, uma oscilação na rede do data center ou a falha da fonte restante causará o desligamento abrupto do Enclosure. Isso resulta em parada total do equipamento, interrupção imediata de todo o I/O, queda dos servidores conectados e altíssimo risco de corrupção de dados em cache não gravado no disco. Requer verificação elétrica imediata (cabos/PDUs) e acionamento do suporte de hardware.
+              manual_close: 'YES'
+              dependencies:
+                -
+                  name: 'IBM Storage: Falha ao coletar dados via API'
+                  expression: |
+                    nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                    or
+                    nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+          master_item:
+            key: Get.LsEnclosure
+          lld_macro_paths:
+            -
+              lld_macro: '{#SERIAL_NUMBER}'
+              path: $.serial_number
+            -
+              lld_macro: '{#ENCLOSURE_ID}'
+              path: $.id
+        -
+          uuid: f04d145c09e24f9f83c5df9251f0f418
+          name: 'Storage Pools PSUs'
+          type: DEPENDENT
+          key: Pools.PSUs
+          delay: '0'
+          lifetime: 7d
+          item_prototypes:
+            -
+              uuid: 8d3ba5a05c2d44e9b144889adceb23fd
+              name: 'Alimentação da PSU: "{#PSU_ID}" (Enclosure: "{#ENCLOSURE_ID}")'
+              type: DEPENDENT
+              key: 'psu.input_power["{#ENCLOSURE_ID}:{#PSU_ID}"]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.enclosure_id == "{#ENCLOSURE_ID}" && @.PSU_id == "{#PSU_ID}")].input_power.first()'
+                -
+                  type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 24h
+              master_item:
+                key: Get.PSUs
+            -
+              uuid: fc8a492e710449458e249d9d47938748
+              name: 'Status da PSU: "{#PSU_ID}" (Enclosure: "{#ENCLOSURE_ID}")'
+              type: DEPENDENT
+              key: 'psu.status["{#ENCLOSURE_ID}:{#PSU_ID}"]'
+              delay: '0'
+              history: 31d
+              valuemap:
+                name: Status
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.enclosure_id == "{#ENCLOSURE_ID}" && @.PSU_id == "{#PSU_ID}")].status.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - online
+                    - '1'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: Get.PSUs
+              trigger_prototypes:
+                -
+                  uuid: 14f10d83478947d780689a53a0534c5c
+                  expression: 'max(/TEMPLATE API STORAGE FS/psu.status["{#ENCLOSURE_ID}:{#PSU_ID}"],#3)=0'
+                  name: 'Storage: Falha de hardware na PSU "{#PSU_ID}" (Enclosure: "{#ENCLOSURE_ID}")'
+                  priority: HIGH
+                  description: |
+                    Significado: A fonte de alimentação (PSU) não está registrando entrada de energia elétrica (Input Power zerado), indicando que parou de receber alimentação da tomada/PDU.
+                    Impacto: A PSU está inoperante por falta de alimentação elétrica externa, eliminando a redundância de energia do Enclosure. Isso geralmente indica um cabo de força desconectado, o desarme de um disjuntor na PDU do rack, ou a queda de uma das pernas (fases) do No-Break (UPS) do data center. Sem essa redundância, uma falha na rede elétrica secundária causará o desligamento imediato do storage, resultando em indisponibilidade total de todos os servidores e bancos de dados que dependem dele. Requer verificação imediata da infraestrutura elétrica do rack e dos cabos de força traseiros.
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+          master_item:
+            key: Get.PSUs
+          lld_macro_paths:
+            -
+              lld_macro: '{#ENCLOSURE_ID}'
+              path: $.enclosure_id
+            -
+              lld_macro: '{#PSU_ID}'
+              path: $.PSU_id
+        -
+          uuid: 43ac3306c754450b982a254715c800cc
+          name: 'Storage Volumes (VDisks)'
+          type: DEPENDENT
+          key: Pools.Volumes.vdisks
+          delay: '0'
+          lifetime: 7d
+          item_prototypes:
+            -
+              uuid: 62f49b708e574249bf0ac0afd6ee58fa
+              name: 'Capacidade - Volume: "{#VDISK_NAME}"'
+              type: DEPENDENT
+              key: 'vdisk.capacity.raw["{#VDISK_ID}"]'
+              delay: '0'
+              history: 31d
+              value_type: FLOAT
+              units: B
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#VDISK_ID}")].capacity_bytes.first()'
+              master_item:
+                key: Get.Volumes_vdisks
+            -
+              uuid: 4391ed22885a425bb9448af90acb8b88
+              name: 'Pool do Volume: "{#VDISK_NAME}"'
+              type: DEPENDENT
+              key: 'vdisk.pool["{#VDISK_ID}"]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#VDISK_ID}")].mdisk_grp_name.first()'
+                -
+                  type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 24h
+              master_item:
+                key: Get.Volumes_vdisks
+            -
+              uuid: dab7fb91f4474a0ea5fad61dce5e8074
+              name: 'Snapshots - Volume: "{#VDISK_NAME}"'
+              type: DEPENDENT
+              key: 'vdisk.snapshots["{#VDISK_ID}"]'
+              delay: '0'
+              history: 31d
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#VDISK_ID}")].snapshot_count.first()'
+              master_item:
+                key: Get.Volumes_vdisks
+            -
+              uuid: b281de8f4f1a433891dd4ecda2c996af
+              name: 'Status do Volume: "{#VDISK_NAME}"'
+              type: DEPENDENT
+              key: 'vdisk.status["{#VDISK_ID}"]'
+              delay: '0'
+              history: 31d
+              valuemap:
+                name: Status
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#VDISK_ID}")].status.first()'
+                -
+                  type: REGEX
+                  parameters:
+                    - online
+                    - '1'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: Get.Volumes_vdisks
+              trigger_prototypes:
+                -
+                  uuid: fd8d0bc6cf7c40cb926c61345fa61af2
+                  expression: 'max(/TEMPLATE API STORAGE FS/vdisk.status["{#VDISK_ID}"],#3)=0'
+                  name: 'Storage: Volume "{#VDISK_NAME}" está Offline/Inacessível'
+                  priority: HIGH
+                  description: |
+                    Significado: O volume lógico (VDisk/LUN) mapeado para um ou mais servidores apresentou um estado anormal de operação (podendo estar offline, degradado ou bloqueado por falta de espaço no pool).
+                    
+                    Impacto: Este é um cenário de interrupção total de serviço para o host que utiliza este volume. O servidor perderá o acesso ao seu disco de dados ou sistema operacional, resultando em travamento imediato (BSOD/Kernel Panic), corrupção de sistemas de arquivos e parada crítica de bancos de dados. Se este volume hospedar datastores VMware, todas as máquinas virtuais contidas nele ficarão em estado 'Inaccessible' ou 'Orphaned'. Requer investigação urgente para entender se a queda foi causada por falha física no pool ou erro de configuração de mapeamento.
+                  manual_close: 'YES'
+                  dependencies:
+                    -
+                      name: 'IBM Storage: Falha ao coletar dados via API'
+                      expression: |
+                        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+                        or
+                        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+            -
+              uuid: b1d7957d6b50419fb734db1ca5e165db
+              name: 'Grupo do Volume: "{#VDISK_NAME}"'
+              type: DEPENDENT
+              key: 'vdisk.volgroup["{#VDISK_ID}"]'
+              delay: '0'
+              history: 31d
+              trends: '0'
+              discover: NO_DISCOVER
+              value_type: CHAR
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$..[?(@.id == "{#VDISK_ID}")].volume_group_name.first()'
+                -
+                  type: CHECK_JSON_ERROR
+                  parameters:
+                    - '$..[?(@.id == "{#VDISK_ID}")].volume_group_name.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: 'Sem Grupo'
+                -
+                  type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 24h
+              master_item:
+                key: Get.Volumes_vdisks
+          master_item:
+            key: Get.Volumes_vdisks
+          lld_macro_paths:
+            -
+              lld_macro: '{#VDISK_ID}'
+              path: $.id
+            -
+              lld_macro: '{#VDISK_NAME}'
+              path: $.name
+      macros:
+        -
+          macro: '{$API.PASS}'
+          value: PASSWORD
+        -
+          macro: '{$API.URL}'
+          value: 'API_IP( https:// )'
+        -
+          macro: '{$API.USER}'
+          value: USER
+      valuemaps:
+        -
+          uuid: 0a5d0b275af8485998036950dcc4312f
+          name: Status
+          mappings:
+            -
+              value: '1'
+              newvalue: Online
+            -
+              value: '0'
+              newvalue: Offline
+  triggers:
+    -
+      uuid: 8dcbd327c18040dba9e7f38e957300af
+      expression: |
+        nodata(/TEMPLATE API STORAGE FS/Get.Canisters,45m)=1
+        or
+        nodata(/TEMPLATE API STORAGE FS/Get.Hosts,45m)=1
+        or
+        nodata(/TEMPLATE API STORAGE FS/Get.lsdrive,45m)=1
+        or
+        nodata(/TEMPLATE API STORAGE FS/Get.LsEnclosure,45m)=1
+        or
+        nodata(/TEMPLATE API STORAGE FS/Get.Pools,45m)=1
+        or
+        nodata(/TEMPLATE API STORAGE FS/Get.PSUs,45m)=1
+        or
+        nodata(/TEMPLATE API STORAGE FS/Get.Volumes_vdisks,45m)=1
+      name: 'IBM Storage: Falha ao coletar dados via API'
+      priority: HIGH
+      manual_close: 'YES'

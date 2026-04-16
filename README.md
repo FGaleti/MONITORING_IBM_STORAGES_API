@@ -54,7 +54,7 @@ Para uma visualização gerencial:
 
 ## 📸 Preview do Dashboard
 
-<img width="1889" height="829" alt="image" src="https://github.com/user-attachments/assets/dc8fad6b-2acf-4976-93f3-08cf949169d1" />
+<img width="1280" height="571" alt="image" src="https://github.com/user-attachments/assets/1a6c6dca-8804-4b53-8b6c-fc9547bca684" />
 
 
 ---
